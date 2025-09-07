@@ -1,39 +1,53 @@
-// netlify/functions/removeBg.js
-export default async (req, context) => {
+// netlify/functions/removebg.js
+export async function handler(event) {
+  // CORS erlauben
+  const cors = {
+    "Access-Control-Allow-Origin": "*",   // für Produktivbetrieb auf deine Domain einschränken
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type"
+  };
+  if (event.httpMethod === "OPTIONS") {
+    return { statusCode: 204, headers: cors };
+  }
+
   try {
-    const body = await req.json();
-    const { imageBase64 } = body;
+    const contentType =
+      event.headers["content-type"] ||
+      event.headers["Content-Type"] ||
+      "application/octet-stream";
 
-    if (!imageBase64) {
-      return new Response(JSON.stringify({ error: "No image provided" }), { status: 400 });
-    }
+    // Body korrekt dekodieren (Netlify liefert Base64 bei Binärdaten)
+    const body = event.isBase64Encoded
+      ? Buffer.from(event.body, "base64")
+      : event.body;
 
-    const apiKey = process.env.REMOVEBG_API_KEY; // liegt später bei Netlify
+    // Anfrage an remove.bg weiterleiten – der Key kommt aus Netlify Env
     const resp = await fetch("https://api.remove.bg/v1.0/removebg", {
       method: "POST",
       headers: {
-        "X-Api-Key": apiKey,
+        "X-Api-Key": process.env.REMOVEBG_API_KEY,
+        "Content-Type": contentType
       },
-      body: (() => {
-        const formData = new FormData();
-        formData.append("image_file_b64", imageBase64);
-        formData.append("size", "auto");
-        return formData;
-      })(),
+      body
     });
 
-    if (!resp.ok) {
-      const errText = await resp.text();
-      return new Response(JSON.stringify({ error: errText }), { status: resp.status });
-    }
+    const buf = Buffer.from(await resp.arrayBuffer());
 
-    const arrayBuffer = await resp.arrayBuffer();
-    const base64 = Buffer.from(arrayBuffer).toString("base64");
-
-    return new Response(JSON.stringify({ imageBase64: `data:image/png;base64,${base64}` }), {
-      headers: { "Content-Type": "application/json" },
-    });
+    return {
+      statusCode: resp.status,
+      headers: {
+        ...cors,
+        "Content-Type": resp.headers.get("content-type") || "image/png",
+        "Cache-Control": "no-store"
+      },
+      body: buf.toString("base64"),
+      isBase64Encoded: true
+    };
   } catch (err) {
-    return new Response(JSON.stringify({ error: err.message }), { status: 500 });
+    return {
+      statusCode: 500,
+      headers: cors,
+      body: JSON.stringify({ error: err.message })
+    };
   }
-};
+}
